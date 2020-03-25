@@ -95,6 +95,7 @@ function mso19.init()
     Banks:reset()
 end
 
+DissectorTable.get("usb.bulk"):add(0xff, mso19)
 DissectorTable.get("usb.bulk"):add(0xffff, mso19)
 
 function mso19_heur(buffer, pinfo, tree)
