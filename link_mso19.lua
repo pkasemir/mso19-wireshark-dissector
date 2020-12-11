@@ -8,33 +8,46 @@ local State = { begin = 0, body = 1 }
 
 MsoCtx = { }
 function MsoCtx:reset()
-    self.infos = { [0] = { bank = 0, state = State.begin }}
-    self.last = 0
+    self.dsts = { }
 end
 function MsoCtx:prepare_info(pinfo)
-    local info = self.infos[pinfo.number]
+    local dst_key = tostring(pinfo.dst)
+    local dst = self.dsts[dst_key]
+    if dst == nil then
+        dst = { }
+        self.dsts[dst_key] = dst
+        dst.infos = { [0] = { bank = 0, state = State.begin }}
+        dst.last = 0
+    end
+    local info = dst.infos[pinfo.number]
     if info == nil then
         info = { }
-        self.infos[pinfo.number] = info
-        info.prev = self.infos[self.last]
-        self.last = pinfo.number
+        dst.infos[pinfo.number] = info
+        info.prev = dst.last
+        dst.last = pinfo.number
     end
 
-    info.bank = info.prev.bank
-    info.state = info.prev.state
+    local prev = dst.infos[info.prev]
+
+    info.bank = prev.bank
+    info.state = prev.state
+end
+function MsoCtx:get_info(pinfo)
+    local dst = self.dsts[tostring(pinfo.dst)]
+    return dst.infos[pinfo.number]
 end
 function MsoCtx:current_bank(pinfo)
-    return self.infos[pinfo.number].bank
+    return self:get_info(pinfo).bank
 end
 function MsoCtx:update_bank(pinfo, bank)
-    self.infos[pinfo.number].bank = bank
+    self:get_info(pinfo).bank = bank
 end
 
 function MsoCtx:current_state(pinfo)
-    return self.infos[pinfo.number].state
+    return self:get_info(pinfo).state
 end
 function MsoCtx:update_state(pinfo, state)
-    self.infos[pinfo.number].state = state
+    self:get_info(pinfo).state = state
 end
     
 local header   = ProtoField.bytes("mso19.header", "Header")
