@@ -102,19 +102,22 @@ end
 function mso19.dissector(buffer, pinfo, tree)
     local length = buffer:len()
     if length == 0 then return end
+    local from_host = tostring(pinfo.src) == "host"
 
     pinfo.cols.protocol = mso19.name
 
     local subtree = tree:add(mso19, buffer(), "USB MSO19")
-    MsoCtx:prepare_info(pinfo)
 
     local control_found = false
     local offset = 0
     local control_buffer = buffer
-    while offset < length do
-        offset = dissect_control(buffer(offset), pinfo, subtree)
-        if offset == 0 then break end
-        control_found = true
+    if from_host then
+        MsoCtx:prepare_info(pinfo)
+        while offset < length do
+            offset = dissect_control(buffer(offset), pinfo, subtree)
+            if offset == 0 then break end
+            control_found = true
+        end
     end
 
     if not control_found then
