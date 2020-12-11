@@ -53,11 +53,13 @@ end
 
 function dissect_control(buffer, pinfo, tree)
     local length = buffer:len()
+    local added_tree = false
     local command_buffer
 
     if MsoCtx:current_state(pinfo) == State.begin then
         if not check_magic(buffer) then return 0 end
         tree:add(header, buffer(0, 5))
+        added_tree = true
         MsoCtx:update_state(pinfo, State.body)
         if length == 5 then return buffer:offset() + 5 end
         command_buffer = buffer(5)
@@ -68,6 +70,7 @@ function dissect_control(buffer, pinfo, tree)
     while command_buffer:len() >= 1 do
         if command_buffer(0, 1):uint() == cmd_wrapper then
             tree:add(tailer, command_buffer(0, 1))
+            added_tree = true
             MsoCtx:update_state(pinfo, State.begin)
             return command_buffer:offset() + 1
         end
@@ -86,10 +89,12 @@ function dissect_control(buffer, pinfo, tree)
         tree:add(command, command_buffer(0, 2)):set_text(string.format(
             " Bank %s Addr: %2d value: 0x%02x",
             bank, addr, value))
+        added_tree = true
         -- Avoid out of range error when trying to consume the entire tvb
         if command_buffer:len() == 2 then return command_buffer:offset() + 2 end
         command_buffer = command_buffer(2)
     end
+    if not added_tree then return 0 end
     return command_buffer:offset()
 
 end
