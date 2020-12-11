@@ -4,19 +4,37 @@ mso19 = Proto("LINK_mso19",  "Link MSO19")
 local cmd_wrapper = 0x7e
 local current_bank
 
-Banks = { banks = {} }
-function Banks:reset()
-    self.banks = {}
+local State = { begin = 0, body = 1 }
+
+MsoCtx = { }
+function MsoCtx:reset()
+    self.infos = { [0] = { bank = 0, state = State.begin }}
+    self.last = 0
 end
-function Banks:reset_bank(pinfo)
-    local prev = self.banks[pinfo.number - 1] or 0
-    self.banks[pinfo.number] = prev
+function MsoCtx:prepare_info(pinfo)
+    local info = self.infos[pinfo.number]
+    if info == nil then
+        info = { }
+        self.infos[pinfo.number] = info
+        info.prev = self.infos[self.last]
+        self.last = pinfo.number
+    end
+
+    info.bank = info.prev.bank
+    info.state = info.prev.state
 end
-function Banks:current_bank(pinfo)
-    return self.banks[pinfo.number]
+function MsoCtx:current_bank(pinfo)
+    return self.infos[pinfo.number].bank
 end
-function Banks:update_bank(pinfo, bank)
-    self.banks[pinfo.number] = bank
+function MsoCtx:update_bank(pinfo, bank)
+    self.infos[pinfo.number].bank = bank
+end
+
+function MsoCtx:current_state(pinfo)
+    return self.infos[pinfo.number].state
+end
+function MsoCtx:update_state(pinfo, state)
+    self.infos[pinfo.number].state = state
 end
     
 local header   = ProtoField.bytes("mso19.header", "Header")
@@ -28,21 +46,29 @@ mso19.fields = { header, tailer, command, response }
 
 function check_magic(buffer)
     local length = buffer:len()
-    if length < 6 then return false end
+    if length < 5 then return false end
     local magic = 0x404c4453
     return buffer(0, 4):uint() == magic and buffer(4, 1):uint() == cmd_wrapper
 end
 
 function dissect_control(buffer, pinfo, tree)
     local length = buffer:len()
+    local command_buffer
 
-    if not check_magic(buffer) then return 0 end
-    tree:add(header,   buffer(0, 5))
-    local command_buffer = buffer(5)
+    if MsoCtx:current_state(pinfo) == State.begin then
+        if not check_magic(buffer) then return 0 end
+        tree:add(header, buffer(0, 5))
+        MsoCtx:update_state(pinfo, State.body)
+        if length == 5 then return buffer:offset() + 5 end
+        command_buffer = buffer(5)
+    else
+        command_buffer = buffer
+    end
     local bank, addr, value, tmp
     while command_buffer:len() >= 1 do
         if command_buffer(0, 1):uint() == cmd_wrapper then
             tree:add(tailer, command_buffer(0, 1))
+            MsoCtx:update_state(pinfo, State.begin)
             return command_buffer:offset() + 1
         end
         if command_buffer:len() < 2 then break end
@@ -52,16 +78,16 @@ function dissect_control(buffer, pinfo, tree)
         value  = bit.bor(bit.band(tmp, 0x3f), bit.band(bit.rshift(tmp, 6), 0xc0))
 
         if addr == 0xf then
-            Banks:update_bank(pinfo, bit.band(value, 0x3))
+            MsoCtx:update_bank(pinfo, bit.band(value, 0x3))
             bank = " "
         else
-            bank = tostring(Banks:current_bank(pinfo))
+            bank = tostring(MsoCtx:current_bank(pinfo))
         end
         tree:add(command, command_buffer(0, 2)):set_text(string.format(
             " Bank %s Addr: %2d value: 0x%02x",
             bank, addr, value))
         -- Avoid out of range error when trying to consume the entire tvb
-        if command_buffer:len() == 2 then return 0 end
+        if command_buffer:len() == 2 then return command_buffer:offset() + 2 end
         command_buffer = command_buffer(2)
     end
     return command_buffer:offset()
@@ -75,7 +101,7 @@ function mso19.dissector(buffer, pinfo, tree)
     pinfo.cols.protocol = mso19.name
 
     local subtree = tree:add(mso19, buffer(), "USB MSO19")
-    Banks:reset_bank(pinfo)
+    MsoCtx:prepare_info(pinfo)
 
     local control_found = false
     local offset = 0
@@ -92,7 +118,7 @@ function mso19.dissector(buffer, pinfo, tree)
 end
 
 function mso19.init()
-    Banks:reset()
+    MsoCtx:reset()
 end
 
 DissectorTable.get("usb.bulk"):add(0xff, mso19)
